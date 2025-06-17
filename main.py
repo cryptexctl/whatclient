@@ -1,84 +1,102 @@
-from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import secrets
-import json
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from datetime import datetime, timedelta
-import base64
-import os
-import hashlib
+import uuid
 
 app = FastAPI()
 
-class ClientInfo(BaseModel):
-    package_name: str
-    device_model: str
-    android_version: str
+class RequestClientPayload(BaseModel):
+    requester_id: int
+    target_id: int
 
-class ClientKey(BaseModel):
-    client_key: str
+class SubmitTaskPayload(BaseModel):
+    request_id: str
+    client_name: str
 
-class Session:
-    def __init__(self, session_id: str):
-        self.session_id = session_id
-        self.client_info = None
-        self.client_key = None
-        self.created_at = datetime.now()
+# --- In-Memory Storage ---
+class ClientRequest:
+    def __init__(self, requester_id: int, target_id: int):
+        self.request_id = str(uuid.uuid4())
+        self.requester_id = requester_id
+        self.target_id = target_id
+        self.status = "pending"  # pending -> completed | expired
+        self.result: Optional[str] = None
+        self.timestamp = datetime.now()
 
-user_clients: Dict[str, Dict] = {}
+PENDING_REQUESTS: Dict[str, ClientRequest] = {}
+REQUEST_TIMEOUT_MINUTES = 2
 
-sessions: Dict[str, Session] = {}
-
-def cleanup_old_sessions():
+# --- Helper Functions ---
+def cleanup_expired_requests():
+    """Removes requests older than REQUEST_TIMEOUT_MINUTES."""
     now = datetime.now()
-    old_sessions = [
-        sid for sid, session in sessions.items()
-        if now - session.created_at > timedelta(hours=1)
+    expired_ids = [
+        req_id for req_id, req in PENDING_REQUESTS.items()
+        if now - req.timestamp > timedelta(minutes=REQUEST_TIMEOUT_MINUTES)
     ]
-    for sid in old_sessions:
-        del sessions[sid]
+    for req_id in expired_ids:
+        del PENDING_REQUESTS[req_id]
 
-def generate_session():
-    session_id = secrets.token_hex(16)
-    sessions[session_id] = Session(session_id)
-    return session_id
-
-def verify_client_key(session_id: str, client_key: str) -> bool:
-    expected_key = hashlib.sha256(session_id.encode()).hexdigest()
-    return client_key == expected_key
-
-def get_client_name(package_name: str) -> str:
-    if package_name == "com.exteragram.messenger":
-        return "exteraGram"
-    elif package_name == "com.radolyn.ayugram":
-        return "ayuGram"
-    elif package_name == "org.telegram.messenger":
-        return "Official Telegram"
-    else:
-        return "Unknown Client"
-
-@app.post("/whatClient")
-async def init_client_check(client_info: ClientInfo):
-    cleanup_old_sessions()
-    session_id = generate_session()
-    sessions[session_id].client_info = client_info
-    return {"session_id": session_id}
-
-@app.post("/whatClient/{session_id}")
-async def verify_client(session_id: str, client_key: ClientKey):
-    session = sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-        
-    if not verify_client_key(session_id, client_key.client_key):
-        raise HTTPException(status_code=403, detail="Invalid client key")
-        
-    if not session.client_info:
-        raise HTTPException(status_code=400, detail="No client info")
-        
-    user_clients[session.client_info.package_name] = {
-        "client_info": session.client_info,
-        "cached_at": datetime.now()
+def get_client_name_from_package(package_name: str) -> str:
+    """Maps package name to a user-friendly client name."""
+    client_map = {
+        "com.exteragram.messenger": "exteraGram",
+        "com.radolyn.ayugram": "ayuGram",
     }
+    return client_map.get(package_name, "Unknown Client")
+
+# --- API Endpoints ---
+@app.post("/requestClient")
+async def request_client(payload: RequestClientPayload):
+    """Initiated by Alice to request Bob's client info."""
+    cleanup_expired_requests()
     
-    return {"client_name": get_client_name(session.client_info.package_name)} 
+    new_request = ClientRequest(
+        requester_id=payload.requester_id,
+        target_id=payload.target_id
+    )
+    PENDING_REQUESTS[new_request.request_id] = new_request
+    
+    return {"request_id": new_request.request_id}
+
+@app.get("/getTasks/{user_id}")
+async def get_tasks(user_id: int):
+    """Periodically polled by Bob's plugin to see if anyone is asking for his client."""
+    cleanup_expired_requests()
+    
+    tasks = [
+        req.request_id for req in PENDING_REQUESTS.values()
+        if req.target_id == user_id and req.status == "pending"
+    ]
+    
+    return {"tasks": tasks}
+
+@app.post("/submitTaskResult")
+async def submit_task_result(payload: SubmitTaskPayload):
+    """Used by Bob's plugin to submit his client name for a specific request."""
+    request = PENDING_REQUESTS.get(payload.request_id)
+    
+    if not request or request.status != "pending":
+        raise HTTPException(status_code=404, detail="Request not found or already processed.")
+        
+    client_name = get_client_name_from_package(payload.client_name)
+    request.result = client_name
+    request.status = "completed"
+    
+    return {"status": "success"}
+
+@app.get("/getRequestResult/{request_id}")
+async def get_request_result(request_id: str):
+    """Periodically polled by Alice's plugin to get the result."""
+    request = PENDING_REQUESTS.get(request_id)
+
+    if not request:
+        return {"status": "expired"}
+        
+    if request.status == "completed":
+        client_name = request.result
+        del PENDING_REQUESTS[request_id]
+        return {"status": "completed", "client_name": client_name}
+    
+    return {"status": "pending"} 
