@@ -1,10 +1,46 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.routing import APIRoute
 from pydantic import BaseModel
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Callable
 from datetime import datetime, timedelta
 import uuid
+import hmac
+import hashlib
+import os
+
+SECRET_KEY = os.environ.get("API_SECRET_KEY", "lainapi.gay").encode('utf-8')
+
+class SignedAPIRoute(APIRoute):
+    def get_route_handler(self) -> Callable:
+        original_route_handler = super().get_route_handler()
+
+        async def custom_route_handler(request: Request) -> Response:
+            signature_header = request.headers.get("X-Signature")
+            if not signature_header:
+                raise HTTPException(status_code=403, detail="X-Signature header is missing.")
+
+            data_to_sign = b""
+            if request.method in ["POST", "PUT"]:
+                body = await request.body()
+                request._body = body
+                data_to_sign = body
+            elif request.method == "GET":
+                data_to_sign = request.url.path.encode('utf-8')
+            
+            if not data_to_sign:
+                 return await original_route_handler(request)
+
+            expected_signature = hmac.new(SECRET_KEY, data_to_sign, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(signature_header, expected_signature):
+                raise HTTPException(status_code=403, detail="Invalid signature.")
+
+            return await original_route_handler(request)
+
+        return custom_route_handler
+
 
 app = FastAPI()
+app.router.route_class = SignedAPIRoute
 
 class RequestClientPayload(BaseModel):
     requester_id: int
@@ -14,7 +50,6 @@ class SubmitTaskPayload(BaseModel):
     request_id: str
     client_name: str
 
-# --- In-Memory Storage ---
 class ClientRequest:
     def __init__(self, requester_id: int, target_id: int):
         self.request_id = str(uuid.uuid4())
@@ -27,7 +62,6 @@ class ClientRequest:
 PENDING_REQUESTS: Dict[str, ClientRequest] = {}
 REQUEST_TIMEOUT_MINUTES = 2
 
-# --- Helper Functions ---
 def cleanup_expired_requests():
     """Removes requests older than REQUEST_TIMEOUT_MINUTES."""
     now = datetime.now()
@@ -46,7 +80,6 @@ def get_client_name_from_package(package_name: str) -> str:
     }
     return client_map.get(package_name, "Unknown Client")
 
-# --- API Endpoints ---
 @app.post("/requestClient")
 async def request_client(payload: RequestClientPayload):
     """Initiated by Alice to request Bob's client info."""
