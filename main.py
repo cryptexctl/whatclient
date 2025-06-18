@@ -13,16 +13,13 @@ SECRET_KEY = os.environ.get("API_SECRET_KEY", "lainapi.gay").encode('utf-8')
 EPHEMERAL_KEY = os.urandom(32)
 
 def xor_cipher(data: bytes, key: bytes) -> bytes:
-    """A simple XOR cipher."""
     return bytes([b ^ key[i % len(key)] for i, b in enumerate(data)])
 
 def encrypt_data(data: str) -> str:
-    """Encrypts string data using the ephemeral key and encodes to Base64."""
     encrypted_bytes = xor_cipher(data.encode('utf-8'), EPHEMERAL_KEY)
     return base64.b64encode(encrypted_bytes).decode('utf-8')
 
 def decrypt_data(encoded_data: str) -> str:
-    """Decodes Base64 and decrypts data using the ephemeral key."""
     decoded_bytes = base64.b64decode(encoded_data.encode('utf-8'))
     decrypted_bytes = xor_cipher(decoded_bytes, EPHEMERAL_KEY)
     return decrypted_bytes.decode('utf-8')
@@ -99,7 +96,6 @@ def get_client_name_from_package(package_name: str) -> str:
 
 @app.post("/requestClient")
 async def request_client(payload: RequestClientPayload):
-    """Initiated by Alice to request Bob's client info."""
     cleanup_expired_requests()
     
     new_request = ClientRequest(
