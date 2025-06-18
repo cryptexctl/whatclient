@@ -7,8 +7,25 @@ import uuid
 import hmac
 import hashlib
 import os
+import base64
 
 SECRET_KEY = os.environ.get("API_SECRET_KEY", "lainapi.gay").encode('utf-8')
+EPHEMERAL_KEY = os.urandom(32)
+
+def xor_cipher(data: bytes, key: bytes) -> bytes:
+    """A simple XOR cipher."""
+    return bytes([b ^ key[i % len(key)] for i, b in enumerate(data)])
+
+def encrypt_data(data: str) -> str:
+    """Encrypts string data using the ephemeral key and encodes to Base64."""
+    encrypted_bytes = xor_cipher(data.encode('utf-8'), EPHEMERAL_KEY)
+    return base64.b64encode(encrypted_bytes).decode('utf-8')
+
+def decrypt_data(encoded_data: str) -> str:
+    """Decodes Base64 and decrypts data using the ephemeral key."""
+    decoded_bytes = base64.b64decode(encoded_data.encode('utf-8'))
+    decrypted_bytes = xor_cipher(decoded_bytes, EPHEMERAL_KEY)
+    return decrypted_bytes.decode('utf-8')
 
 class SignedAPIRoute(APIRoute):
     def get_route_handler(self) -> Callable:
@@ -114,7 +131,7 @@ async def submit_task_result(payload: SubmitTaskPayload):
         raise HTTPException(status_code=404, detail="Request not found or already processed.")
         
     client_name = get_client_name_from_package(payload.client_name)
-    request.result = client_name
+    request.result = encrypt_data(client_name)
     request.status = "completed"
     
     return {"status": "success"}
@@ -128,7 +145,10 @@ async def get_request_result(request_id: str):
         return {"status": "expired"}
         
     if request.status == "completed":
-        client_name = request.result
+        try:
+            client_name = decrypt_data(request.result)
+        except Exception:
+            raise HTTPException(status_code=500, detail="Could not decrypt result.")
         del PENDING_REQUESTS[request_id]
         return {"status": "completed", "client_name": client_name}
     
