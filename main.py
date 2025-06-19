@@ -91,6 +91,7 @@ def get_client_name_from_package(package_name: str) -> str:
     client_map = {
         "com.exteragram.messenger": "exteraGram",
         "com.radolyn.ayugram": "AyuGram",
+        "org.telegram.messenger": "Possibly, FCM AyuGram",
     }
     return client_map.get(package_name, "Unknown Client")
 
