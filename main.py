@@ -10,6 +10,8 @@ import os
 import base64
 import json
 import hashlib
+import json
+import hashlib
 
 SECRET_KEY = os.environ.get("API_SECRET_KEY", "lainapi.gay").encode('utf-8')
 EPHEMERAL_KEY = os.urandom(32)
@@ -65,6 +67,9 @@ class RequestClientPayload(BaseModel):
 class SubmitTaskPayload(BaseModel):
     request_id: str
     client_name: str
+
+class IntegrityCheckPayload(BaseModel):
+    client_manifest: dict
 
 class IntegrityCheckPayload(BaseModel):
     client_manifest: dict
@@ -209,4 +214,30 @@ async def get_request_result(request_id: str):
         del PENDING_REQUESTS[request_id]
         return {"status": "completed", "client_name": client_name}
     
-    return {"status": "pending"} 
+    return {"status": "pending"}
+
+@app.post("/verifyIntegrity")
+async def verify_integrity_endpoint(payload: IntegrityCheckPayload):
+    """Verifies client integrity against official server files."""
+    return verify_integrity(payload.client_manifest)
+
+@app.get("/getOfficialManifest")
+async def get_official_manifest():
+    """Returns the official integrity manifest for public verification."""
+    manifest = load_official_manifest()
+    if not manifest:
+        raise HTTPException(status_code=404, detail="Official manifest not found.")
+    return manifest
+
+@app.post("/verifyIntegrity")
+async def verify_integrity_endpoint(payload: IntegrityCheckPayload):
+    """Verifies client integrity against official server files."""
+    return verify_integrity(payload.client_manifest)
+
+@app.get("/getOfficialManifest")
+async def get_official_manifest():
+    """Returns the official integrity manifest for public verification."""
+    manifest = load_official_manifest()
+    if not manifest:
+        raise HTTPException(status_code=404, detail="Official manifest not found.")
+    return manifest 
