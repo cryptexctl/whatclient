@@ -8,6 +8,8 @@ import hmac
 import hashlib
 import os
 import base64
+import json
+import hashlib
 
 SECRET_KEY = os.environ.get("API_SECRET_KEY", "lainapi.gay").encode('utf-8')
 EPHEMERAL_KEY = os.urandom(32)
@@ -64,6 +66,9 @@ class SubmitTaskPayload(BaseModel):
     request_id: str
     client_name: str
 
+class IntegrityCheckPayload(BaseModel):
+    client_manifest: dict
+
 class ClientRequest:
     def __init__(self, requester_id: int, target_id: int):
         self.request_id = str(uuid.uuid4())
@@ -94,6 +99,61 @@ def get_client_name_from_package(package_name: str) -> str:
         "org.telegram.messenger": "Possibly, FCM AyuGram",
     }
     return client_map.get(package_name, "Unknown Client")
+
+def load_official_manifest() -> Optional[dict]:
+    """Loads the official integrity manifest."""
+    try:
+        manifest_path = os.path.join(os.path.dirname(__file__), "integrity.json")
+        if os.path.exists(manifest_path):
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return None
+
+def verify_integrity(client_manifest: dict) -> dict:
+    """Verifies client manifest against official one."""
+    official_manifest = load_official_manifest()
+    
+    if not official_manifest:
+        return {
+            "status": "error",
+            "message": "Официальный манифест не найден"
+        }
+    
+    official_files = official_manifest.get("files", {})
+    client_files = client_manifest.get("files", {})
+    
+    missing_files = []
+    modified_files = []
+    extra_files = []
+    
+    for file_path, file_info in official_files.items():
+        if file_path not in client_files:
+            missing_files.append(file_path)
+        elif client_files[file_path].get("sha256") != file_info.get("sha256"):
+            modified_files.append(file_path)
+    
+    for file_path in client_files:
+        if file_path not in official_files:
+            extra_files.append(file_path)
+    
+    if missing_files or modified_files:
+        return {
+            "status": "fail",
+            "message": "Проверка интегрити провалена",
+            "details": {
+                "missing_files": missing_files,
+                "modified_files": modified_files,
+                "extra_files": extra_files
+            }
+        }
+    
+    return {
+        "status": "pass",
+        "message": "Проверка интегрити пройдена",
+        "server_version": official_manifest.get("version", "unknown")
+    }
 
 @app.post("/requestClient")
 async def request_client(payload: RequestClientPayload):
