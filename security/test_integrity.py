@@ -3,7 +3,7 @@ import hmac
 import hashlib
 import json
 
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = "http://exteraapi.lainapi.gay"
 SECRET_KEY = "lainapi.gay".encode('utf-8')
 
 def get_signature(key: bytes, data: bytes) -> str:
