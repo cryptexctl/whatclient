@@ -15,7 +15,7 @@ def calculate_file_hash(filepath: str) -> str:
 
 def generate_integrity_manifest(base_dir: str = ".") -> dict:
     manifest = {
-        "version": "1.0.0",
+        "version": "2.6.0",
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "files": {}
     }
